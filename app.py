@@ -18,20 +18,20 @@ def check_suspect(row):
     """Kriteria Suspek CRS: Usia Y < 1 & M < 12 DAN minimal 1 gejala Kategori A = 'Ya'."""
     a_cols = ['A_CHD', 'A_CC', 'A_CG', 'A_PR', 'A_HI']
     has_gejala_a = any(clean_str(row.get(c)) in ['ya', 'y', '1', 'true'] for c in a_cols)
-
-    age_y = float(row.get('AGE_Y')) if pd.notna(row.get('AGE_Y')) and str(row.get('AGE_Y')).replace('.', '', 1).isdigit() else 0
-    age_m = float(row.get('AGE_M')) if pd.notna(row.get('AGE_M')) and str(row.get('AGE_M')).replace('.', '', 1).isdigit() else 0
-
+    
+    age_y = float(row.get('AGE_Y')) if pd.notna(row.get('AGE_Y')) and str(row.get('AGE_Y')).replace('.','',1).isdigit() else 0
+    age_m = float(row.get('AGE_M')) if pd.notna(row.get('AGE_M')) and str(row.get('AGE_M')).replace('.','',1).isdigit() else 0
+    
     return "Y" if (age_y < 1 and age_m < 12 and has_gejala_a) else "N"
 
 def check_clinical(row):
     """Kriteria CRS Klinis (Gejala Kategori A & B)."""
     a_cols = ['A_CHD', 'A_CC', 'A_CG', 'A_PR', 'A_HI']
     b_cols = ['B_PU', 'B_MC', 'B_ME', 'B_IC', 'B_SP', 'B_DD', 'B_RBD']
-
+    
     a_cnt = sum(1 for c in a_cols if clean_str(row.get(c)) in ['ya', 'y'])
     b_cnt = sum(1 for c in b_cols if clean_str(row.get(c)) in ['ya', 'y'])
-
+    
     return "Y" if (a_cnt >= 2 or (a_cnt >= 1 and b_cnt >= 1)) else "N"
 
 def run_all_updates(df):
@@ -41,14 +41,12 @@ def run_all_updates(df):
         docheck = pd.to_datetime(df['DOCHECK'], errors='coerce')
         dob = pd.to_datetime(df['DOB'], errors='coerce')
         days_diff = (docheck - dob).dt.days
-
-        cond_empty = df['AGE_M'].isna() | df['AGE_Y'].isna() | (
-            (df['AGE_M'].fillna(0) == 0) & (df['AGE_Y'].fillna(0) == 0) & df['AGE_D'].isna()
-        )
+        
+        cond_empty = df['AGE_M'].isna() | df['AGE_Y'].isna() | ((df['AGE_M'].fillna(0) == 0) & (df['AGE_Y'].fillna(0) == 0) & df['AGE_D'].isna())
         df.loc[cond_empty, 'AGE_D'] = days_diff[cond_empty].fillna(0)
         df.loc[cond_empty, 'AGE_M'] = (days_diff[cond_empty] // 30).fillna(0)
         df.loc[cond_empty, 'AGE_Y'] = (days_diff[cond_empty] // 365).fillna(0)
-
+        
     if 'H_SPEC_COLL' in df.columns:
         df['H_SPEC_COLL'] = df['H_SPEC_COLL'].fillna("Tidak Tahu")
         if 'H_DCOLLSER1' in df.columns:
@@ -61,107 +59,46 @@ def run_all_updates(df):
     return df
 
 def run_classification_final(df):
-    """Klasifikasi Final CRS HANYA untuk Kasus Suspek CRS (Bulletin).
-
-    Diterjemahkan persis (urutan cabang dipertahankan) dari formula Access:
-
-    FINAL_CLASS_C:
-    1.  Age_M>=1 And Age_M<6 And Suspect="Y" And IGM_SER1="Positif"                         -> 1 (CRS Pasti)
-    2.  Age_M<1  And Suspect="Y" And IGM_SER1="Negatif" And IGM_SER2="Positif"              -> 1
-    3.  Age_M>=1 And Age_M<6 And Suspect="Y" And IGM_SER1="Negatif"                         -> 3 (Bukan CRS)
-    4.  Age_M<1  And Suspect="Y" And IGM_SER1="Negatif" And IGM_SER2="Negatif"              -> 3
-    5.  Age_M<1  And Suspect="Y" And IGM_SER1="Negatif" And IGM_SER2 Is Null And Clinical="Y" -> 2 (CRS Klinis)
-    6.  Age_M<1  And Suspect="Y" And IGM_SER1="Negatif" And IGM_SER2 Is Null And Clinical="N" -> 3
-    7.  Age_M<6  And Suspect="Y" And Clinical="Y" And (SPEC="Tidak" Or SPEC="Tidak Tahu")    -> 2
-    8.  Age_M>5  And Suspect="Y" And IGM_SER1="Positif" And IGG_SER1="Positif"               -> 1
-    9.  Age_M>5  And Suspect="Y" And IGM_SER1="Negatif" And IGG_SER1="Positif" And IGG_SER2="Positif" -> 1
-    10. Age_M>5  And Suspect="Y" And IGG_SER1="Negatif"                                     -> 3
-    11. Age_M>5  And Suspect="Y" And IGM_SER1="Negatif" And IGG_SER1="Positif" And IGG_SER2="Negatif" -> 3
-    12. Age_M>5  And Suspect="Y" And IGM_SER1="Negatif" And IGG_SER1="Positif" And IGG_SER2 Is Null And Clinical="Y" -> 2
-    13. Age_M>5  And Suspect="Y" And IGM_SER1="Negatif" And IGG_SER1="Positif" And IGG_SER2 Is Null And Clinical="N" -> 3
-    14. Age_M<12 And Suspect="Y" And Clinical="Y" And (SPEC="Tidak" Or SPEC="Tidak Tahu")    -> 2
-
-    1 -> "CRS Pasti (Lab Positif)", 2 -> "CRS Klinis", 3 -> "Bukan CRS".
-    Baris Suspect="Y" yang tidak cocok cabang manapun (setara Null di Access) -> "Pending".
-    """
+    """Klasifikasi Final CRS HANYA untuk Kasus Suspek CRS (Bulletin)."""
     df = df.copy()
     df['Suspect_CRS'] = df.apply(check_suspect, axis=1)
     df['Clinical_CRS'] = df.apply(check_clinical, axis=1)
-
+    
     def classify_row(r):
         if r['Suspect_CRS'] != 'Y':
             return "Discarded / Non Suspect"
 
-        age_m = float(r['AGE_M']) if pd.notna(r.get('AGE_M')) and str(r.get('AGE_M')).replace('.', '', 1).isdigit() else 0
-
-        igm1 = clean_str(r.get('H_IGM_S1'))
-        igm2_raw = r.get('H_IGM_S2')
-        igm2 = clean_str(igm2_raw)
-        igm2_null = pd.isna(igm2_raw)
-
-        igg1 = clean_str(r.get('H_IGG_S1'))
-        igg2_raw = r.get('H_IGG_S2')
-        igg2 = clean_str(igg2_raw)
-        igg2_null = pd.isna(igg2_raw)
-
-        clinical = r.get('Clinical_CRS', 'N')
-        spec = clean_str(r.get('H_SPEC_COLL'))
-
-        # 1. Age 1-5 bulan, IgM-S1 Positif -> CRS Pasti
-        if 1 <= age_m < 6 and igm1 == "positif":
+        age_m = float(r['AGE_M']) if pd.notna(r.get('AGE_M')) and str(r.get('AGE_M')).replace('.','',1).isdigit() else 0
+        igm1, igm2 = clean_str(r.get('H_IGM_S1')), clean_str(r.get('H_IGM_S2'))
+        igg1, igg2 = clean_str(r.get('H_IGG_S1')), clean_str(r.get('H_IGG_S2'))
+        clinical, spec = r.get('Clinical_CRS', 'N'), clean_str(r.get('H_SPEC_COLL'))
+        
+        # 1. CRS PASTI
+        if (age_m < 6 and igm1 == "positif") or \
+           (age_m < 1 and igm1 == "negatif" and igm2 == "positif") or \
+           (age_m > 5 and igm1 == "positif" and igg1 == "positif") or \
+           (age_m > 5 and igm1 == "negatif" and igg1 == "positif" and igg2 == "positif"):
             return "CRS Pasti (Lab Positif)"
 
-        # 2. Age <1 bulan, IgM-S1 Negatif & IgM-S2 Positif -> CRS Pasti
-        if age_m < 1 and igm1 == "negatif" and igm2 == "positif":
-            return "CRS Pasti (Lab Positif)"
-
-        # 3. Age 1-5 bulan, IgM-S1 Negatif -> Bukan CRS
-        if 1 <= age_m < 6 and igm1 == "negatif":
+        # 2. BUKAN CRS
+        if (1 <= age_m < 6 and igm1 == "negatif") or \
+           (age_m < 1 and igm1 == "negatif" and igm2 == "negatif") or \
+           (age_m > 5 and igg1 == "negatif") or \
+           (age_m > 5 and igm1 == "negatif" and igg1 == "positif" and igg2 == "negatif"):
             return "Bukan CRS"
 
-        # 4. Age <1 bulan, IgM-S1 & IgM-S2 Negatif -> Bukan CRS
-        if age_m < 1 and igm1 == "negatif" and igm2 == "negatif":
-            return "Bukan CRS"
-
-        # 5. Age <1 bulan, IgM-S1 Negatif, IgM-S2 belum ada, Klinis = Y -> CRS Klinis
-        if age_m < 1 and igm1 == "negatif" and igm2_null and clinical == "Y":
+        # 3. CRS KLINIS vs BUKAN CRS
+        if (age_m < 1 and igm1 == "negatif" and pd.isna(r.get('H_IGM_S2')) and clinical == "Y") or \
+           (age_m > 5 and igm1 == "negatif" and igg1 == "positif" and pd.isna(r.get('H_IGG_S2')) and clinical == "Y") or \
+           (age_m < 12 and clinical == "Y" and spec in ["tidak", "tidak tahu"]) or \
+           (age_m < 12 and clinical == "Y" and spec == "ya" and pd.isna(r.get('H_IGM_S1')) and pd.isna(r.get('H_IGM_S2'))):
             return "CRS Klinis"
 
-        # 6. Age <1 bulan, IgM-S1 Negatif, IgM-S2 belum ada, Klinis = N -> Bukan CRS
-        if age_m < 1 and igm1 == "negatif" and igm2_null and clinical == "N":
+        if (age_m < 1 and igm1 == "negatif" and pd.isna(r.get('H_IGM_S2')) and clinical == "N") or \
+           (age_m > 5 and igm1 == "negatif" and igg1 == "positif" and pd.isna(r.get('H_IGG_S2')) and clinical == "N") or \
+           (age_m < 12 and clinical == "N" and spec in ["tidak", "tidak tahu"]) or \
+           (age_m < 12 and clinical == "N" and spec == "ya" and pd.isna(r.get('H_IGM_S1')) and pd.isna(r.get('H_IGM_S2'))):
             return "Bukan CRS"
-
-        # 7. Age <6 bulan, Klinis = Y, spesimen tidak/tidak diambil -> CRS Klinis
-        if age_m < 6 and clinical == "Y" and spec in ["tidak", "tidak tahu"]:
-            return "CRS Klinis"
-
-        # 8. Age >5 bulan, IgM-S1 & IgG-S1 Positif -> CRS Pasti
-        if age_m > 5 and igm1 == "positif" and igg1 == "positif":
-            return "CRS Pasti (Lab Positif)"
-
-        # 9. Age >5 bulan, IgM-S1 Negatif, IgG-S1 & IgG-S2 Positif -> CRS Pasti
-        if age_m > 5 and igm1 == "negatif" and igg1 == "positif" and igg2 == "positif":
-            return "CRS Pasti (Lab Positif)"
-
-        # 10. Age >5 bulan, IgG-S1 Negatif -> Bukan CRS
-        if age_m > 5 and igg1 == "negatif":
-            return "Bukan CRS"
-
-        # 11. Age >5 bulan, IgM-S1 Negatif, IgG-S1 Positif, IgG-S2 Negatif -> Bukan CRS
-        if age_m > 5 and igm1 == "negatif" and igg1 == "positif" and igg2 == "negatif":
-            return "Bukan CRS"
-
-        # 12. Age >5 bulan, IgM-S1 Negatif, IgG-S1 Positif, IgG-S2 belum ada, Klinis = Y -> CRS Klinis
-        if age_m > 5 and igm1 == "negatif" and igg1 == "positif" and igg2_null and clinical == "Y":
-            return "CRS Klinis"
-
-        # 13. Age >5 bulan, IgM-S1 Negatif, IgG-S1 Positif, IgG-S2 belum ada, Klinis = N -> Bukan CRS
-        if age_m > 5 and igm1 == "negatif" and igg1 == "positif" and igg2_null and clinical == "N":
-            return "Bukan CRS"
-
-        # 14. Age <12 bulan, Klinis = Y, spesimen tidak/tidak diambil (catch-all) -> CRS Klinis
-        if age_m < 12 and clinical == "Y" and spec in ["tidak", "tidak tahu"]:
-            return "CRS Klinis"
 
         return "Pending"
 
@@ -205,7 +142,7 @@ elif step == "2. Data Cleaning & Checks":
             "Cek04_Umur > 11 Bulan", "Cek05_Kab/Prov Kosong", "Cek06_Epid ID Duplikat",
             "Cek07_Nama Duplikat", "Cek08_Pengambilan Spesimen Kosong"
         ])
-
+        
         if "Cek01" in check: res = df[df['EPID_ID'].isna()]
         elif "Cek02" in check: res = df[df['DOB'].isna()]
         elif "Cek03" in check: res = df[df['AGE_M'].isna() | df['AGE_Y'].isna()]
@@ -214,7 +151,7 @@ elif step == "2. Data Cleaning & Checks":
         elif "Cek06" in check: res = df[df.duplicated('EPID_ID', keep=False)].sort_values('EPID_ID')
         elif "Cek07" in check: res = df[df.duplicated('NAME', keep=False)].sort_values('NAME')
         elif "Cek08" in check: res = df[df['H_SPEC_COLL'].isna()]
-
+            
         st.write(f"Ditemukan **{len(res)}** record bermasalah:")
         st.dataframe(res, use_container_width=True)
 
@@ -229,11 +166,11 @@ elif step == "3. Run Updates & Classification":
             df_classified = run_classification_final(df_updated)
             st.session_state.df_current = df_classified
             st.success("Proses Update Umur, Spesimen, dan Klasifikasi Selesai!")
-
+            
         if 'Suspect_CRS' in st.session_state.df_current.columns:
             df_suspect_only = st.session_state.df_current[st.session_state.df_current['Suspect_CRS'] == 'Y']
             summary_counts = df_suspect_only['FINAL_CLASS_UPDATED'].value_counts()
-
+            
             st.subheader("Ringkasan Hasil Klasifikasi Suspek CRS (Khusus Bulletin):")
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("CRS Pasti (Lab Positif)", summary_counts.get("CRS Pasti (Lab Positif)", 0))
@@ -247,7 +184,7 @@ elif step == "3. Run Updates & Classification":
 elif step == "4. Visualisasi Grafik (Save PNG)":
     st.header("Langkah 4: Visualisasi Grafik CRS Surveillance")
     st.info("💡 **Arahkan kursor ke pojok kanan atas grafik lalu klik ikon kamera 📷 ('Download plot as a png') untuk menyimpan grafik.**")
-
+    
     if st.session_state.df_current is None:
         st.warning("Unggah data pada Langkah 1 terlebih dahulu.")
     else:
@@ -274,7 +211,7 @@ elif step == "4. Visualisasi Grafik (Save PNG)":
                 hos_counts = df_suspect['HOS_NAME'].value_counts().reset_index().head(10)
                 hos_counts.columns = ['Rumah Sakit', 'Jumlah Suspek']
                 fig2 = px.bar(hos_counts, y='Rumah Sakit', x='Jumlah Suspek', orientation='h', text='Jumlah Suspek', color_discrete_sequence=['#2b5c8f'])
-                fig2.update_layout(yaxis={'categoryorder': 'total ascending'})
+                fig2.update_layout(yaxis={'categoryorder':'total ascending'})
                 fig2.update_traces(textposition='outside')
                 st.plotly_chart(fig2, use_container_width=True)
 
@@ -307,7 +244,7 @@ elif step == "5. Export Reports":
 
         c1, c2 = st.columns(2)
         bln, thn = c1.text_input("Bulan Pelaporan", "09"), c2.text_input("Tahun Pelaporan", "2026")
-
+        
         # Bulletin Export
         df_bulletin = df[df['Suspect_CRS'] == 'Y']
         buf_b = BytesIO()
