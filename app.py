@@ -184,7 +184,7 @@ elif step == "3. Run Updates & Classification":
 # STEP 4: VISUALISASI & GRAFIK
 elif step == "4. Visualisasi & Grafik (Save PNG)":
     st.header("Langkah 4: Visualisasi Data CRS Surveillance")
-    st.info("💡 **Arahkan kursor ke pojok kanan atas grafik lalu klik ikon kamera 📷 ('Download plot as a png') untuk menyimpan grafik.**")
+    st.info(" **Arahkan kursor ke pojok kanan atas grafik lalu klik ikon kamera ('Download plot as a png') untuk menyimpan grafik.**")
     
     if st.session_state.df_current is None:
         st.warning("Unggah data pada Langkah 1 terlebih dahulu.")
