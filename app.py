@@ -59,50 +59,196 @@ def run_all_updates(df):
     return df
 
 def run_classification_final(df):
-    """Klasifikasi Final CRS HANYA untuk Kasus Suspek CRS (Bulletin)."""
+    """
+    Final CRS classification based on Access FINAL_CLASS_C (text version).
+    Only suspected CRS cases are classified.
+    Other cases are labeled 'Discarded / Non Suspect'.
+    """
+
     df = df.copy()
-    df['Suspect_CRS'] = df.apply(check_suspect, axis=1)
-    df['Clinical_CRS'] = df.apply(check_clinical, axis=1)
-    
+
+    # Recalculate suspect and clinical criteria using existing functions
+    df["Suspect_CRS"] = df.apply(check_suspect, axis=1)
+    df["Clinical_CRS"] = df.apply(check_clinical, axis=1)
+
+    def normalize_value(value):
+        if pd.isna(value):
+            return ""
+        return str(value).strip().lower()
+
+    def is_missing(value):
+        return pd.isna(value) or str(value).strip() == ""
+
     def classify_row(r):
-        if r['Suspect_CRS'] != 'Y':
+
+        # Only classify suspected CRS cases
+        if r["Suspect_CRS"] != "Y":
             return "Discarded / Non Suspect"
 
-        age_m = float(r['AGE_M']) if pd.notna(r.get('AGE_M')) and str(r.get('AGE_M')).replace('.','',1).isdigit() else 0
-        igm1, igm2 = clean_str(r.get('H_IGM_S1')), clean_str(r.get('H_IGM_S2'))
-        igg1, igg2 = clean_str(r.get('H_IGG_S1')), clean_str(r.get('H_IGG_S2'))
-        clinical, spec = r.get('Clinical_CRS', 'N'), clean_str(r.get('H_SPEC_COLL'))
-        
-        # 1. CRS PASTI
-        if (age_m < 6 and igm1 == "positif") or \
-           (age_m < 1 and igm1 == "negatif" and igm2 == "positif") or \
-           (age_m > 5 and igm1 == "positif" and igg1 == "positif") or \
-           (age_m > 5 and igm1 == "negatif" and igg1 == "positif" and igg2 == "positif"):
+        # Age
+        try:
+            age_m = float(r["AGE_M"]) if not is_missing(r.get("AGE_M")) else None
+        except (ValueError, TypeError):
+            age_m = None
+
+        # Laboratory results
+        igm1 = normalize_value(r.get("H_IGM_S1"))
+        igm2 = normalize_value(r.get("H_IGM_S2"))
+        igg1 = normalize_value(r.get("H_IGG_S1"))
+        igg2 = normalize_value(r.get("H_IGG_S2"))
+
+        # Specimen collection
+        spec = normalize_value(r.get("H_SPEC_COLL"))
+
+        # Clinical classification
+        clinical = r.get("Clinical_CRS", "N")
+        clinical = normalize_value(clinical)
+
+        is_clinical = clinical in ["y", "ya", "clinical"]
+        is_non_clinical = clinical in ["n", "tidak", "non clinical"]
+
+        # Missing age: classification cannot be determined
+        if age_m is None:
+            return "Pending"
+
+        # --------------------------------------------------
+        # 1. CRS PASTI (LAB POSITIVE)
+        # --------------------------------------------------
+
+        # Age 1–5 months: first IgM positive
+        if (
+            1 <= age_m < 6
+            and igm1 == "positif"
+        ):
             return "CRS Pasti (Lab Positif)"
 
-        # 2. BUKAN CRS
-        if (1 <= age_m < 6 and igm1 == "negatif") or \
-           (age_m < 1 and igm1 == "negatif" and igm2 == "negatif") or \
-           (age_m > 5 and igg1 == "negatif") or \
-           (age_m > 5 and igm1 == "negatif" and igg1 == "positif" and igg2 == "negatif"):
+        # Age below 1 month: first IgM negative, second positive
+        if (
+            age_m < 1
+            and igm1 == "negatif"
+            and igm2 == "positif"
+        ):
+            return "CRS Pasti (Lab Positif)"
+
+        # Age above 5 months: IgM and IgG first samples positive
+        if (
+            age_m > 5
+            and igm1 == "positif"
+            and igg1 == "positif"
+        ):
+            return "CRS Pasti (Lab Positif)"
+
+        # Age above 5 months: first IgM negative,
+        # first and second IgG positive
+        if (
+            age_m > 5
+            and igm1 == "negatif"
+            and igg1 == "positif"
+            and igg2 == "positif"
+        ):
+            return "CRS Pasti (Lab Positif)"
+
+        # --------------------------------------------------
+        # 2. BUKAN CRS: LABORATORY CRITERIA
+        # --------------------------------------------------
+
+        # Age 1–5 months: first IgM negative
+        if (
+            1 <= age_m < 6
+            and igm1 == "negatif"
+        ):
             return "Bukan CRS"
 
-        # 3. CRS KLINIS vs BUKAN CRS
-        if (age_m < 1 and igm1 == "negatif" and pd.isna(r.get('H_IGM_S2')) and clinical == "Y") or \
-           (age_m > 5 and igm1 == "negatif" and igg1 == "positif" and pd.isna(r.get('H_IGG_S2')) and clinical == "Y") or \
-           (age_m < 12 and clinical == "Y" and spec in ["tidak", "tidak tahu"]) or \
-           (age_m < 12 and clinical == "Y" and spec == "ya" and pd.isna(r.get('H_IGM_S1')) and pd.isna(r.get('H_IGM_S2'))):
+        # Age below 1 month: both IgM samples negative
+        if (
+            age_m < 1
+            and igm1 == "negatif"
+            and igm2 == "negatif"
+        ):
+            return "Bukan CRS"
+
+        # Age above 5 months: first IgG negative
+        if (
+            age_m > 5
+            and igg1 == "negatif"
+        ):
+            return "Bukan CRS"
+
+        # Age above 5 months: first IgM negative,
+        # first IgG positive, second IgG negative
+        if (
+            age_m > 5
+            and igm1 == "negatif"
+            and igg1 == "positif"
+            and igg2 == "negatif"
+        ):
+            return "Bukan CRS"
+
+        # --------------------------------------------------
+        # 3. CLINICAL CLASSIFICATION: MISSING SECOND SAMPLE
+        # --------------------------------------------------
+
+        # Age below 1 month: first IgM negative,
+        # second IgM missing
+        if (
+            age_m < 1
+            and igm1 == "negatif"
+            and is_missing(r.get("H_IGM_S2"))
+            and is_clinical
+        ):
             return "CRS Klinis"
 
-        if (age_m < 1 and igm1 == "negatif" and pd.isna(r.get('H_IGM_S2')) and clinical == "N") or \
-           (age_m > 5 and igm1 == "negatif" and igg1 == "positif" and pd.isna(r.get('H_IGG_S2')) and clinical == "N") or \
-           (age_m < 12 and clinical == "N" and spec in ["tidak", "tidak tahu"]) or \
-           (age_m < 12 and clinical == "N" and spec == "ya" and pd.isna(r.get('H_IGM_S1')) and pd.isna(r.get('H_IGM_S2'))):
+        if (
+            age_m < 1
+            and igm1 == "negatif"
+            and is_missing(r.get("H_IGM_S2"))
+            and is_non_clinical
+        ):
             return "Bukan CRS"
 
+        # Age above 5 months: first IgM negative,
+        # first IgG positive, second IgG missing
+        if (
+            age_m > 5
+            and igm1 == "negatif"
+            and igg1 == "positif"
+            and is_missing(r.get("H_IGG_S2"))
+            and is_clinical
+        ):
+            return "CRS Klinis"
+
+        if (
+            age_m > 5
+            and igm1 == "negatif"
+            and igg1 == "positif"
+            and is_missing(r.get("H_IGG_S2"))
+            and is_non_clinical
+        ):
+            return "Bukan CRS"
+
+        # --------------------------------------------------
+        # 4. SPECIMEN NOT COLLECTED / UNKNOWN
+        # --------------------------------------------------
+
+        if (
+            age_m < 6
+            and is_clinical
+            and spec in ["tidak", "tidak tahu"]
+        ):
+            return "CRS Klinis"
+
+        if (
+            age_m < 12
+            and is_clinical
+            and spec in ["tidak", "tidak tahu"]
+        ):
+            return "CRS Klinis"
+
+        # No matching rule
         return "Pending"
 
-    df['FINAL_CLASS_UPDATED'] = df.apply(classify_row, axis=1)
+    df["FINAL_CLASS_UPDATED"] = df.apply(classify_row, axis=1)
+
     return df
 
 # ---------------------------------------------------------
