@@ -1,31 +1,26 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
 from io import BytesIO
 
-st.set_page_config(page_title="CRS Surveillance System", layout="wide")
-st.title("CRS Surveillance Data Processing & Cleaning Dashboard")
+st.set_page_config(page_title="CRS Surveillance Dashboard", layout="wide")
+st.title("CRS Surveillance Data Processing & Analytics Dashboard")
 
 # ---------------------------------------------------------
 # HELPER FUNCTIONS (MATCHING MS ACCESS LOGIC PRECISELY)
 # ---------------------------------------------------------
 
 def clean_str(val):
-    """Clean string values for precise matching."""
     if pd.isna(val):
         return ""
     return str(val).strip().lower()
 
 def check_suspect(row):
-    """
-    Kriteria Qry1/Qry4 MS Access:
-    IIf([AGE_Y]<1 And [AGE_M]<12 And ([A_CHD]="Ya" Or [A_CC]="Ya" Or ...),"Y","N")
-    """
-    # 1. Evaluasi Gejala A
     a_cols = ['A_CHD', 'A_CC', 'A_CG', 'A_PR', 'A_HI']
     has_gejala_a = any(clean_str(row.get(c)) in ['ya', 'y', '1', 'true'] for c in a_cols)
     
-    # 2. Evaluasi Umur (Access menganggap NaN/Null pada Age sebagai < 1 / < 12)
     age_y = row.get('AGE_Y')
     age_m = row.get('AGE_M')
     
@@ -46,10 +41,7 @@ def check_clinical(row):
     return "Y" if (a_cnt >= 2 or (a_cnt >= 1 and b_cnt >= 1)) else "N"
 
 def run_all_updates(df):
-    """Menggabungkan Qry1_Update Umur & Qry2-Qry4_Update Spesimen dalam 1 fungsi ringkas."""
     df = df.copy()
-    
-    # 1. Update Umur (Qry1_Update Umur)
     if 'DOCHECK' in df.columns and 'DOB' in df.columns:
         docheck = pd.to_datetime(df['DOCHECK'], errors='coerce')
         dob = pd.to_datetime(df['DOB'], errors='coerce')
@@ -60,17 +52,14 @@ def run_all_updates(df):
         df.loc[cond_empty_age, 'AGE_M'] = (days_diff[cond_empty_age] // 30).fillna(0)
         df.loc[cond_empty_age, 'AGE_Y'] = (days_diff[cond_empty_age] // 365).fillna(0)
         
-    # 2. Update Spesimen (Qry2, Qry3, Qry4)
     if 'H_SPEC_COLL' in df.columns:
         df['H_SPEC_COLL'] = df['H_SPEC_COLL'].fillna("Tidak Tahu")
         
         if 'H_DCOLLSER1' in df.columns:
-            # Qry3: Update Tanggal Pengambilan Sampel 1
             if 'H_DRES_IGM_S1' in df.columns:
                 cond3 = df['H_DCOLLSER1'].isna() & df['H_DRES_IGM_S1'].notna() & (df['H_SPEC_COLL'].apply(clean_str) == 'ya')
                 df.loc[cond3, 'H_DCOLLSER1'] = df.loc[cond3, 'H_DRES_IGM_S1']
             
-            # Qry4: Update Tanggal Pengambilan Sampel 2
             if 'DOCHECK' in df.columns:
                 cond4 = df['H_DCOLLSER1'].isna() & (df['H_SPEC_COLL'].apply(clean_str) == 'ya')
                 df.loc[cond4, 'H_DCOLLSER1'] = df.loc[cond4, 'DOCHECK']
@@ -78,7 +67,6 @@ def run_all_updates(df):
     return df
 
 def run_classification_final(df):
-    """Proses Klasifikasi Final (Qry5 & Qry6)."""
     df = df.copy()
     df['Suspect_CRS'] = df.apply(check_suspect, axis=1)
     df['Clinical_CRS'] = df.apply(check_clinical, axis=1)
@@ -92,7 +80,6 @@ def run_classification_final(df):
         clinical = r.get('Clinical_CRS', 'N')
         spec = clean_str(r.get('H_SPEC_COLL'))
         
-        # Qry5_Update Final 1
         if (age_m < 6 and igm1 == "positif") or \
            (age_m < 1 and igm1 == "negatif" and igm2 == "positif") or \
            (age_m > 5 and igm1 == "positif" and igg1 == "positif") or \
@@ -105,7 +92,6 @@ def run_classification_final(df):
            (age_m > 5 and igm1 == "negatif" and igg1 == "positif" and igg2 == "negatif"):
             return "Bukan CRS"
             
-        # Qry6_Update Final 2
         if age_m < 1 and igm1 == "negatif" and pd.isna(r.get('H_IGM_S2')) and clinical == "Y":
             return "CRS Klinis"
         if age_m < 1 and igm1 == "negatif" and pd.isna(r.get('H_IGM_S2')) and clinical == "N":
@@ -139,10 +125,11 @@ step = st.sidebar.radio("Navigasi Langkah Kerja:", [
     "1. Import Data Excel",
     "2. Data Cleaning & Quality Checks",
     "3. Run Updates & Classification",
-    "4. Export Reports (Bulletin & Non Suspect)"
+    "4. Visualisasi & Grafik (Save PNG)",
+    "5. Export Reports (Bulletin & Non Suspect)"
 ])
 
-# STEP 1
+# STEP 1: IMPORT
 if step == "1. Import Data Excel":
     st.header("Langkah 1: Import Data")
     uploaded_file = st.file_uploader("Upload File Data Raw (.xlsx / .xls)", type=["xlsx", "xls"])
@@ -152,7 +139,7 @@ if step == "1. Import Data Excel":
         st.success(f"Data Berhasil Diunggah! Total Record: {len(df_uploaded)}")
         st.dataframe(df_uploaded.head(5), use_container_width=True)
 
-# STEP 2
+# STEP 2: QUALITY CHECKS
 elif step == "2. Data Cleaning & Quality Checks":
     st.header("Langkah 2: Validation Checks")
     if st.session_state.df_current is None:
@@ -177,7 +164,7 @@ elif step == "2. Data Cleaning & Quality Checks":
         st.write(f"Ditemukan **{len(res)}** record bermasalah:")
         st.dataframe(res, use_container_width=True)
 
-# STEP 3
+# STEP 3: UPDATES & CLASSIFICATION
 elif step == "3. Run Updates & Classification":
     st.header("Langkah 3: Auto-Update & Klasifikasi CRS")
     if st.session_state.df_current is None:
@@ -194,9 +181,78 @@ elif step == "3. Run Updates & Classification":
             st.write(st.session_state.df_current['Suspect_CRS'].value_counts().rename({'Y': 'Suspect CRS', 'N': 'Non Suspect CRS'}))
             st.dataframe(st.session_state.df_current[['EPID_ID', 'NAME', 'AGE_M', 'Suspect_CRS', 'FINAL_CLASS_UPDATED']].head(10), use_container_width=True)
 
-# STEP 4
-elif step == "4. Export Reports (Bulletin & Non Suspect)":
-    st.header("Langkah 4: Export Reports")
+# STEP 4: VISUALISASI & GRAFIK
+elif step == "4. Visualisasi & Grafik (Save PNG)":
+    st.header("Langkah 4: Visualisasi Data CRS Surveillance")
+    st.info("💡 **Arahkan kursor ke pojok kanan atas grafik lalu klik ikon kamera 📷 ('Download plot as a png') untuk menyimpan grafik.**")
+    
+    if st.session_state.df_current is None:
+        st.warning("Unggah data pada Langkah 1 terlebih dahulu.")
+    else:
+        df = st.session_state.df_current
+        if 'FINAL_CLASS_UPDATED' not in df.columns:
+            df = run_classification_final(run_all_updates(df))
+            st.session_state.df_current = df
+
+        col_a, col_b = st.columns(2)
+        
+        # Grafik 1: Proporsi Klasifikasi Final Kasus
+        with col_a:
+            st.subheader("1. Proporsi Klasifikasi Final Kasus")
+            class_counts = df['FINAL_CLASS_UPDATED'].value_counts().reset_index()
+            class_counts.columns = ['Klasifikasi', 'Jumlah']
+            fig1 = px.bar(class_counts, x='Klasifikasi', y='Jumlah', color='Klasifikasi',
+                          text='Jumlah', title="Distribusi Klasifikasi Akhir Kasus CRS",
+                          color_discrete_sequence=px.colors.qualitative.Set2)
+            fig1.update_traces(textposition='outside')
+            st.plotly_chart(fig1, use_container_width=True)
+
+        # Grafik 2: Distribusi Kasus per Rumah Sakit Sentinel
+        with col_b:
+            st.subheader("2. Kasus per Rumah Sakit Sentinel")
+            if 'HOS_NAME' in df.columns:
+                hos_counts = df['HOS_NAME'].value_counts().reset_index().head(10)
+                hos_counts.columns = ['Rumah Sakit', 'Jumlah Suspek']
+                fig2 = px.bar(hos_counts, y='Rumah Sakit', x='Jumlah Suspek', orientation='h',
+                              text='Jumlah Suspek', title="Top 10 RS Sentinel (Jumlah Suspek Terbanyak)",
+                              color_discrete_sequence=['#2b5c8f'])
+                fig2.update_layout(yaxis={'categoryorder':'total ascending'})
+                fig2.update_traces(textposition='outside')
+                st.plotly_chart(fig2, use_container_width=True)
+
+        col_c, col_d = st.columns(2)
+        
+        # Grafik 3: Temuan Gejala Klinis Utama
+        with col_c:
+            st.subheader("3. Temuan Gejala Klinis Utama")
+            gejala_cols = {'A_CHD': 'Kelainan Jantung (CHD)', 'A_CC': 'Katarak (CC)', 
+                           'A_CG': 'Glaukoma (CG)', 'A_HI': 'Gangguan Pendengaran (HI)'}
+            gejala_data = []
+            for col_k, label in gejala_cols.items():
+                if col_k in df.columns:
+                    cnt = sum(1 for v in df[col_k] if clean_str(v) in ['ya', 'y'])
+                    gejala_data.append({'Gejala': label, 'Jumlah Kasus': cnt})
+            
+            df_gejala = pd.DataFrame(gejala_data)
+            fig3 = px.bar(df_gejala, x='Gejala', y='Jumlah Kasus', text='Jumlah Kasus',
+                          title="Frekuensi Gejala Klinis Kategori A",
+                          color_discrete_sequence=['#e66101'])
+            fig3.update_traces(textposition='outside')
+            st.plotly_chart(fig3, use_container_width=True)
+
+        # Grafik 4: Distribusi Umur Kasus (Bulan)
+        with col_d:
+            st.subheader("4. Distribusi Umur Kasus (Bulan)")
+            if 'AGE_M' in df.columns:
+                fig4 = px.histogram(df[df['AGE_M'].notna()], x='AGE_M', nbins=12,
+                                    title="Distribusi Umur Kasus (Bulan)",
+                                    labels={'AGE_M': 'Umur (Bulan)'},
+                                    color_discrete_sequence=['#5e3c99'])
+                st.plotly_chart(fig4, use_container_width=True)
+
+# STEP 5: EXPORT
+elif step == "5. Export Reports (Bulletin & Non Suspect)":
+    st.header("Langkah 5: Export Reports")
     if st.session_state.df_current is None:
         st.warning("Unggah data pada Langkah 1 terlebih dahulu.")
     else:
